@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { it } from 'node:test';
-import { assertDedicatedPages, commentBody, commentMarker, replacePreview, updateComment, validateSummary } from '../publish/publish.mjs';
+import { assertDedicatedPages, commentBody, commentMarker, publicationContext, replacePreview, updateComment, validateSummary } from '../publish/publish.mjs';
 
 const summary = {
   from: 'a'.repeat(40), revision: 'b'.repeat(40),
@@ -81,3 +81,27 @@ it('allows first publication while its current deployment is pending', { concurr
     return [{ state: 'pending' }];
   });
 });
+
+for (const changed of [null, 'head', 'base']) {
+  it(`manual PR publication ${changed ? 'rejects a changed ' + changed : 'uses the selected PR'}`, { concurrency: true }, async t => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'groma-manual-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const exported = path.join(directory, 'architecture/auto');
+    await mkdir(exported, { recursive: true });
+    await writeFile(path.join(exported, 'comparison.json'), JSON.stringify(summary));
+    const base = 'c'.repeat(40);
+    const result = await publicationContext({ number: 42, base, directory, theme: 'auto' }, async route => {
+      assert.equal(route, '/pulls/42');
+      return {
+        head: { sha: changed === 'head' ? 'd'.repeat(40) : summary.revision },
+        base: { sha: changed === 'base' ? 'e'.repeat(40) : base },
+      };
+    });
+    if (changed) assert.equal(result, null);
+    else {
+      assert.equal(result.number, 42);
+      assert.equal(result.directory, directory);
+      assert.deepEqual(result.summary, summary);
+    }
+  });
+}

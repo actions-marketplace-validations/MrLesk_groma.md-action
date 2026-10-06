@@ -12,7 +12,7 @@ For public repositories without an existing GitHub Pages site:
 2. In **Settings → Pages**, set the source to **GitHub Actions**.
 3. Copy [`examples/pull-request.yml`](examples/pull-request.yml) to `.github/workflows/groma-pr.yml` on your default branch.
 
-Every PR then gets the comment, updated on each push. The map compares the PR with its merge base, so it shows what the PR introduces. No account or secret needed: the workflow uses `GITHUB_TOKEN`. Fork PRs work too.
+PRs from the same repository get the comment, updated on each push. The map compares the PR with its merge base, so it shows what the PR introduces. No account or secret needed: the workflow uses `GITHUB_TOKEN`. Fork PRs wait for a maintainer: after review, open **Actions → Groma PR comparison → Run workflow** on the default branch and enter the PR number. This approves one comparison; later fork pushes do not trigger another export.
 
 ### Existing Pages sites
 
@@ -20,8 +20,8 @@ Keep your publisher. Run the build Action with `from` and `revision` (check out 
 
 ### What runs on a PR
 
-- `compare` is read-only. It exports the committed architecture and source of both commits. It doesn't scan, install dependencies or run PR scripts.
-- `publish` deploys the preview to Pages and updates the comment. Keep PR-supplied commands out of this job.
+- `compare` is read-only. It keeps the trusted base checked out and fetches the PR commit as data. Groma exports both committed snapshots without scanning, installing application dependencies or running PR scripts. Keep checkout's fork protection enabled.
+- `publish` receives the selected PR number and exact base commit, deploys the preview to Pages and updates the comment. It skips publication if the PR head or base has changed. Keep PR-supplied commands out of this job.
 - Previews are public and stay at `/pr-<number>/architecture/auto/` after the PR closes. Private repositories aren't supported.
 
 ## Publish a current map
@@ -31,6 +31,7 @@ For a repository without a Pages site, set the Pages source to **GitHub Actions*
 ```yaml
 - uses: MrLesk/groma.md-action@v1
   with:
+    groma-version: '0.6.5'
     output: site # your built site
     theme: blueprint
 ```
@@ -41,6 +42,7 @@ The Action scans with the scanners committed in `scanners.json`. It doesn't init
 
 | Input | Default | Meaning |
 | --- | --- | --- |
+| `groma-version` | `0.6.5` | Groma CLI version; pin it to control reader upgrades |
 | `output` | `groma-site` | Website root, relative to the checkout |
 | `theme` | `auto` | `auto`, `light`, `dark` or `blueprint` |
 | `exclude` | | Extra scan exclusions, one per line; not for comparisons |
@@ -53,4 +55,6 @@ The Action scans with the scanners committed in `scanners.json`. It doesn't init
 | `directory` | The map, at `<output>/architecture/<theme>/` |
 | `summary` | Comparison JSON with the change counts; empty without `from` |
 
-The Action installs Groma 0.6.5. `@v1` always points to the latest 1.x release.
+The default is Groma 0.6.5. `@v1` follows Action releases, which can change that default. Set `groma-version` to an exact release to keep reader upgrades explicit.
+
+Both comparison commits must contain architecture that the selected Groma version can read. After a format change, update an older PR from its base branch so its merge base and head use the current format. Choosing a version does not convert committed architecture.

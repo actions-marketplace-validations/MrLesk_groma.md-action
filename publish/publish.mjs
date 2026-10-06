@@ -123,19 +123,14 @@ async function storePreview(context) {
   await appendFile(process.env.GITHUB_OUTPUT, `ready=true\nsite=${site}\n`);
 }
 
-async function context() {
-  const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8'));
-  if (process.env.GITHUB_EVENT_NAME !== 'pull_request_target' || !event.pull_request) {
-    throw new Error('Use the documented pull_request_target workflow.');
-  }
-  const number = event.pull_request.number;
+export async function publicationContext({ number, base, directory, theme }, request = api) {
   if (!Number.isSafeInteger(number) || number <= 0) throw new Error('Invalid PR number.');
-  const theme = process.env.GROMA_THEME;
+  if (!/^[a-f0-9]{40}$/.test(base)) throw new Error('Invalid PR base commit.');
   if (!['auto', 'light', 'dark', 'blueprint'].includes(theme)) throw new Error('Invalid theme.');
-  const directory = path.resolve(process.env.GROMA_DIRECTORY);
+  directory = path.resolve(directory);
   const summary = validateSummary(JSON.parse(await readFile(path.join(directory, 'architecture', theme, 'comparison.json'), 'utf8')));
-  const pr = await api(`/pulls/${number}`);
-  if (pr.head.sha !== summary.revision || pr.base.sha !== event.pull_request.base.sha) {
+  const pr = await request(`/pulls/${number}`);
+  if (pr.head.sha !== summary.revision || pr.base.sha !== base) {
     console.log('A newer PR revision is available; this build will not be published.');
     return null;
   }
@@ -143,7 +138,10 @@ async function context() {
 }
 
 if (process.argv[1] === import.meta.filename) {
-  const current = await context();
+  const current = await publicationContext({
+    number: Number(process.env.GROMA_PULL_REQUEST), base: process.env.GROMA_BASE,
+    directory: process.env.GROMA_DIRECTORY, theme: process.env.GROMA_THEME,
+  });
   if (current && process.argv[2] === 'store') await storePreview(current);
   else if (current && process.argv[2] === 'comment') {
     const baseUrl = `${process.env.GROMA_PAGE_URL.replace(/\/$/, '')}/pr-${current.number}/architecture/${current.theme}/`;

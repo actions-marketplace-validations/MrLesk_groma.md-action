@@ -31,6 +31,9 @@ jobs:
           exclude: |
             /examples/
 
+      - name: Verify the default Groma version
+        run: test "$(groma --version)" = "0.6.5"
+
       - name: Check workflow inputs
         run: npm --prefix .action run check
 
@@ -52,6 +55,8 @@ jobs:
           git add src/client.js
           git commit -m 'After'
           echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # Compare stored commits while the working checkout remains at the base.
+          git checkout --detach HEAD^
           mkdir fixture-scanner
           cat > fixture-scanner/package.json <<'JSON'
           {"name":"fixture-scanner","version":"1.0.0","type":"module","groma":{"scanner":{"id":"javascript","entry":"./index.mjs","include":["**/*.js"]}}}
@@ -72,9 +77,13 @@ jobs:
         id: comparison
         uses: ./.action
         with:
+          groma-version: '0.6.6'
           output: comparison-site
           from: ${{ steps.commits.outputs.from }}
           revision: ${{ steps.commits.outputs.revision }}
+
+      - name: Verify the selected Groma version
+        run: test "$(groma --version)" = "0.6.6"
 
       - name: Verify committed comparison
         env:

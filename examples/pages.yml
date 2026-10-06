@@ -25,6 +25,7 @@ jobs:
         id: map
         uses: MrLesk/groma.md-action@v1
         with:
+          groma-version: '0.6.5'
           theme: ${{ env.GROMA_THEME }}
 
       - uses: actions/upload-pages-artifact@v4

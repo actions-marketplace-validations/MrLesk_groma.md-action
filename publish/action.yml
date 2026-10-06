@@ -1,6 +1,12 @@
 name: Publish Groma PR comparison
 description: Retain a public PR comparison on dedicated GitHub Pages and update its review comment.
 inputs:
+  pull-request:
+    description: PR number selected for this comparison.
+    default: ${{ github.event.pull_request.number }}
+  base:
+    description: Exact PR base commit when the comparison was selected.
+    default: ${{ github.event.pull_request.base.sha }}
   directory:
     description: Downloaded website root from the comparison build.
     required: true
@@ -28,6 +34,8 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         GROMA_DIRECTORY: ${{ inputs.directory }}
         GROMA_THEME: ${{ inputs.theme }}
+        GROMA_PULL_REQUEST: ${{ inputs.pull-request }}
+        GROMA_BASE: ${{ inputs.base }}
       run: node "$GITHUB_ACTION_PATH/publish.mjs" store
     - uses: actions/upload-pages-artifact@v4
       if: steps.store.outputs.ready == 'true'
@@ -44,5 +52,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         GROMA_DIRECTORY: ${{ inputs.directory }}
         GROMA_THEME: ${{ inputs.theme }}
+        GROMA_PULL_REQUEST: ${{ inputs.pull-request }}
+        GROMA_BASE: ${{ inputs.base }}
         GROMA_PAGE_URL: ${{ steps.deploy.outputs.page_url }}
       run: node "$GITHUB_ACTION_PATH/publish.mjs" comment

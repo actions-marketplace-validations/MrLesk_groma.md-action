@@ -6,6 +6,9 @@ branding:
   color: blue
 
 inputs:
+  groma-version:
+    description: Groma CLI version to install. Pin this to control architecture reader upgrades.
+    default: 0.6.5
   output:
     description: Website root, relative to the repository root.
     default: groma-site
@@ -41,8 +44,10 @@ runs:
     - name: Install Groma
       id: groma
       shell: bash
+      env:
+        GROMA_VERSION: ${{ inputs.groma-version }}
       run: |
-        npm install --global groma.md@0.6.5
+        npm install --global "groma.md@$GROMA_VERSION"
         echo "version=$(groma --version)" >> "$GITHUB_OUTPUT"
 
     - name: Prepare project
