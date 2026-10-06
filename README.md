@@ -53,4 +53,4 @@ The Action scans with the scanners committed in `scanners.json`. It doesn't init
 | `directory` | The map, at `<output>/architecture/<theme>/` |
 | `summary` | Comparison JSON with the change counts; empty without `from` |
 
-The Action installs Groma 0.6.2. `@v1` always points to the latest 1.x release.
+The Action installs Groma 0.6.5. `@v1` always points to the latest 1.x release.
