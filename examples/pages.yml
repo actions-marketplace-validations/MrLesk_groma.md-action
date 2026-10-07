@@ -5,19 +5,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 env:
   GROMA_THEME: blueprint
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
 
@@ -28,26 +25,34 @@ jobs:
           groma-version: '0.6.5'
           theme: ${{ env.GROMA_THEME }}
 
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
+          name: groma-map
           path: ${{ steps.map.outputs.output }}
+          retention-days: 1
 
-  deploy:
+  publish:
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      contents: write
       pages: write
       id-token: write
+    # The map shares one Pages site with PR comparisons. Serialize publication.
+    concurrency:
+      group: groma-pages
+      cancel-in-progress: false
     environment:
       name: github-pages
-      url: ${{ steps.map-url.outputs.url }}
+      url: ${{ steps.map.outputs.url }}
     steps:
-      - name: Publish architecture website
-        id: deployment
-        uses: actions/deploy-pages@v4
-
-      - name: Link to the architecture map
-        id: map-url
-        env:
-          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
-        run: echo "url=${PAGE_URL%/}/architecture/$GROMA_THEME/" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: groma-map
+          path: map
+      - uses: MrLesk/groma.md-action/publish@v1
+        id: map
+        with:
+          directory: map
+          theme: ${{ env.GROMA_THEME }}
+          token: ${{ github.token }}

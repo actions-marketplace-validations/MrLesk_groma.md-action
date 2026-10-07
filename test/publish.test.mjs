@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { it } from 'node:test';
-import { assertDedicatedPages, commentBody, commentMarker, publicationContext, replacePreview, updateComment, validateSummary } from '../publish/publish.mjs';
+import { assertDedicatedPages, commentBody, commentMarker, mapContext, publicationContext, replaceMap, replacePreview, updateComment, validateSummary } from '../publish/publish.mjs';
 
 const summary = {
   from: 'a'.repeat(40), revision: 'b'.repeat(40),
@@ -60,11 +60,58 @@ it('replaces one preview while preserving other PRs and removing obsolete files 
   await assert.rejects(readFile(path.join(site, 'pr-1/obsolete.html')), { code: 'ENOENT' });
 });
 
-it('rejects private publication and unrelated successful Pages deployments', { concurrency: true }, async () => {
-  await assert.rejects(assertDedicatedPages(false, async () => ({ private: true })), /public repositories/);
+it('replaces the root map while preserving PR previews, and PR previews keep the root map', { concurrency: true }, async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'groma-map-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const site = path.join(root, 'site');
+  const map = path.join(root, 'map');
+  const preview = path.join(root, 'preview');
+  for (const directory of [path.join(map, 'architecture/auto'), preview, path.join(site, 'architecture/auto'), path.join(site, 'pr-1')]) {
+    await mkdir(directory, { recursive: true });
+  }
+  await writeFile(path.join(site, 'architecture/auto/obsolete.html'), 'old map');
+  await writeFile(path.join(site, 'pr-1/index.html'), 'PR preview');
+  await writeFile(path.join(map, 'architecture/auto/index.html'), 'new map');
+  await writeFile(path.join(preview, 'index.html'), 'second PR');
+  await replaceMap(site, map);
+  await replacePreview(site, preview, 2);
+  assert.equal(await readFile(path.join(site, 'architecture/auto/index.html'), 'utf8'), 'new map');
+  assert.equal(await readFile(path.join(site, 'pr-1/index.html'), 'utf8'), 'PR preview');
+  assert.equal(await readFile(path.join(site, 'pr-2/index.html'), 'utf8'), 'second PR');
+  await assert.rejects(readFile(path.join(site, 'architecture/auto/obsolete.html')), { code: 'ENOENT' });
+});
+
+for (const moved of [false, true]) {
+  it(`map publication ${moved ? 'skips a build that is no longer' : 'uses a build of'} the default-branch head`, { concurrency: true }, async t => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'groma-map-context-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    await mkdir(path.join(directory, 'architecture/auto'), { recursive: true });
+    await writeFile(path.join(directory, 'architecture/auto/index.html'), 'map');
+    const revision = 'a'.repeat(40);
+    const result = await mapContext({ revision, directory, theme: 'auto' }, async route => {
+      if (route === '') return { default_branch: 'dev' };
+      assert.equal(route, '/branches/dev');
+      return { commit: { sha: moved ? 'b'.repeat(40) : revision } };
+    });
+    if (moved) assert.equal(result, null);
+    else assert.deepEqual(result, { directory, theme: 'auto', revision });
+  });
+}
+
+for (const visibility of ['public', 'private']) {
+  it(`${visibility === 'public' ? 'rejects' : 'allows'} a private repository with a ${visibility} Pages site`, { concurrency: true }, async () => {
+    const result = assertDedicatedPages(true, async route => route === ''
+      ? { private: true }
+      : { build_type: 'workflow', public: visibility === 'public' });
+    if (visibility === 'public') await assert.rejects(result, /visibility to private/);
+    else await result;
+  });
+}
+
+it('rejects unrelated successful Pages deployments', { concurrency: true }, async () => {
   const request = async route => {
     if (route === '') return { private: false };
-    if (route === '/pages') return { build_type: 'workflow' };
+    if (route === '/pages') return { build_type: 'workflow', public: true };
     if (route.startsWith('/deployments?')) return [{ id: 1 }];
     if (route.startsWith('/deployments/1/statuses')) return [{ state: 'success' }];
     throw new Error(route);
@@ -76,7 +123,7 @@ it('rejects private publication and unrelated successful Pages deployments', { c
 it('allows first publication while its current deployment is pending', { concurrency: true }, async () => {
   await assertDedicatedPages(false, async route => {
     if (route === '') return { private: false };
-    if (route === '/pages') return { build_type: 'workflow' };
+    if (route === '/pages') return { build_type: 'workflow', public: true };
     if (route.startsWith('/deployments?')) return [{ id: 1 }];
     return [{ state: 'pending' }];
   });

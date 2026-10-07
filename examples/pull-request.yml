@@ -15,9 +15,8 @@ permissions: {}
 jobs:
   compare:
     if: >-
-      github.event.repository.private == false &&
-      (github.event_name == 'workflow_dispatch' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -68,7 +67,7 @@ jobs:
       pull-requests: write
       pages: write
       id-token: write
-    # All PRs share one Pages site. Serialize publication and retain every preview.
+    # PR comparisons and the default-branch map share one Pages site. Serialize publication and retain every preview.
     concurrency:
       group: groma-pages
       cancel-in-progress: false

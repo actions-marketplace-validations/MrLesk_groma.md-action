@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
-import { appendFile, cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, appendFile, cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 const branch = 'groma-previews';
 const ownership = '.groma-previews';
+const themes = ['auto', 'light', 'dark', 'blueprint'];
 export const commentMarker = '<!-- groma-comparison -->';
 
 export function validateSummary(summary) {
@@ -70,9 +71,12 @@ export async function updateComment(number, body, request = api) {
 
 export async function assertDedicatedPages(owned, request = api) {
   const repository = await request('');
-  if (repository.private) throw new Error('The complete PR workflow supports public repositories only.');
   const site = await request('/pages');
   if (site.build_type !== 'workflow') throw new Error('Select GitHub Actions in Settings → Pages.');
+  // Maps include source code, so a private repository publishes only to a site limited to its readers.
+  if (repository.private && site.public !== false) {
+    throw new Error('This repository is private: set the Pages visibility to private in Settings → Pages.');
+  }
   if (owned) return;
   for await (const deployment of pages('/deployments?environment=github-pages', request)) {
     for await (const status of pages(`/deployments/${deployment.id}/statuses`, request)) {
@@ -83,14 +87,21 @@ export async function assertDedicatedPages(owned, request = api) {
   }
 }
 
-// Only this PR directory is replaced. The branch is also the durable copy of all previews.
+// Only this PR directory is replaced. The branch is also the durable copy of the whole site.
 export async function replacePreview(site, artifact, number) {
   const destination = path.join(site, `pr-${number}`);
   await rm(destination, { recursive: true, force: true });
   await cp(artifact, destination, { recursive: true });
 }
 
-async function storePreview(context) {
+// The default-branch map lives at the site root, beside the pr-<number> previews.
+export async function replaceMap(site, artifact) {
+  const destination = path.join(site, 'architecture');
+  await rm(destination, { recursive: true, force: true });
+  await cp(path.join(artifact, 'architecture'), destination, { recursive: true });
+}
+
+async function storeSite(context) {
   const site = await mkdtemp(path.join(process.env.RUNNER_TEMP, 'groma-pages-'));
   const credential = Buffer.from(`x-access-token:${process.env.GH_TOKEN}`).toString('base64');
   const env = { ...process.env, GIT_CONFIG_COUNT: '1',
@@ -109,13 +120,15 @@ async function storePreview(context) {
     }
   }
   await assertDedicatedPages(exists);
-  await replacePreview(site, context.directory, context.number);
+  if (context.number) await replacePreview(site, context.directory, context.number);
+  else await replaceMap(site, context.directory);
   await writeFile(path.join(site, ownership), 'Groma PR previews\n');
   await writeFile(path.join(site, '.nojekyll'), '');
   await git('add', '.');
   if (await git('status', '--porcelain')) {
+    const message = context.number ? `PR #${context.number}: ${context.revision}` : `Map: ${context.revision}`;
     await git('-c', 'user.name=github-actions[bot]', '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
-      'commit', '--quiet', '-m', `PR #${context.number}: ${context.summary.revision}`);
+      'commit', '--quiet', '-m', message);
     await git('push', 'origin', `HEAD:${branch}`);
   }
   // Pages receives only website content. Keep the Git checkout outside the artifact.
@@ -126,7 +139,7 @@ async function storePreview(context) {
 export async function publicationContext({ number, base, directory, theme }, request = api) {
   if (!Number.isSafeInteger(number) || number <= 0) throw new Error('Invalid PR number.');
   if (!/^[a-f0-9]{40}$/.test(base)) throw new Error('Invalid PR base commit.');
-  if (!['auto', 'light', 'dark', 'blueprint'].includes(theme)) throw new Error('Invalid theme.');
+  if (!themes.includes(theme)) throw new Error('Invalid theme.');
   directory = path.resolve(directory);
   const summary = validateSummary(JSON.parse(await readFile(path.join(directory, 'architecture', theme, 'comparison.json'), 'utf8')));
   const pr = await request(`/pulls/${number}`);
@@ -134,19 +147,39 @@ export async function publicationContext({ number, base, directory, theme }, req
     console.log('A newer PR revision is available; this build will not be published.');
     return null;
   }
-  return { number, directory, theme, summary };
+  return { number, directory, theme, summary, revision: summary.revision };
+}
+
+// Like a PR comparison, a map is published only while its commit is still the default-branch head.
+export async function mapContext({ revision, directory, theme }, request = api) {
+  if (!/^[a-f0-9]{40}$/.test(revision)) throw new Error('Invalid map revision.');
+  if (!themes.includes(theme)) throw new Error('Invalid theme.');
+  directory = path.resolve(directory);
+  await access(path.join(directory, 'architecture', theme, 'index.html'));
+  const repository = await request('');
+  const head = await request(`/branches/${repository.default_branch}`);
+  if (head.commit.sha !== revision) {
+    console.log(`${revision} is not the head of ${repository.default_branch}; this build will not be published.`);
+    return null;
+  }
+  return { directory, theme, revision };
 }
 
 if (process.argv[1] === import.meta.filename) {
-  const current = await publicationContext({
-    number: Number(process.env.GROMA_PULL_REQUEST), base: process.env.GROMA_BASE,
-    directory: process.env.GROMA_DIRECTORY, theme: process.env.GROMA_THEME,
-  });
-  if (current && process.argv[2] === 'store') await storePreview(current);
-  else if (current && process.argv[2] === 'comment') {
-    const baseUrl = `${process.env.GROMA_PAGE_URL.replace(/\/$/, '')}/pr-${current.number}/architecture/${current.theme}/`;
-    const url = `${baseUrl}?revision=${current.summary.revision}&from=${current.summary.from}`;
-    await updateComment(current.number, commentBody(current.summary, url, process.env.GITHUB_REPOSITORY));
+  const directory = process.env.GROMA_DIRECTORY;
+  const theme = process.env.GROMA_THEME;
+  // Without a PR number, the build is the default-branch map.
+  const current = process.env.GROMA_PULL_REQUEST
+    ? await publicationContext({ number: Number(process.env.GROMA_PULL_REQUEST), base: process.env.GROMA_BASE, directory, theme })
+    : await mapContext({ revision: process.env.GROMA_REVISION, directory, theme });
+  if (current && process.argv[2] === 'store') await storeSite(current);
+  else if (current && process.argv[2] === 'link') {
+    const site = process.env.GROMA_PAGE_URL.replace(/\/$/, '');
+    let url = `${site}/architecture/${current.theme}/`;
+    if (current.number) {
+      url = `${site}/pr-${current.number}/architecture/${current.theme}/?revision=${current.revision}&from=${current.summary.from}`;
+      await updateComment(current.number, commentBody(current.summary, url, process.env.GITHUB_REPOSITORY));
+    }
     await appendFile(process.env.GITHUB_OUTPUT, `url=${url}\n`);
   }
 }

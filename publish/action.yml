@@ -1,25 +1,28 @@
-name: Publish Groma PR comparison
-description: Retain a public PR comparison on dedicated GitHub Pages and update its review comment.
+name: Publish Groma architecture
+description: Retain PR comparisons and the default-branch map on dedicated GitHub Pages and update each PR's review comment.
 inputs:
   pull-request:
-    description: PR number selected for this comparison.
+    description: PR number selected for this comparison. Leave it empty to publish the default-branch map.
     default: ${{ github.event.pull_request.number }}
   base:
     description: Exact PR base commit when the comparison was selected.
     default: ${{ github.event.pull_request.base.sha }}
+  revision:
+    description: Default-branch commit the map was built from. Used only without pull-request.
+    default: ${{ github.sha }}
   directory:
-    description: Downloaded website root from the comparison build.
+    description: Downloaded website root from the build.
     required: true
   theme:
     description: Theme used by the build Action.
     default: auto
   token:
-    description: GitHub token with contents and pull-requests write permissions.
+    description: GitHub token with contents write permission, plus pull-requests write for PR comparisons.
     required: true
 outputs:
   url:
-    description: Published comparison URL (empty for an outdated build).
-    value: ${{ steps.comment.outputs.url }}
+    description: Published comparison or map URL (empty for an outdated build).
+    value: ${{ steps.link.outputs.url }}
 runs:
   using: composite
   steps:
@@ -27,7 +30,7 @@ runs:
       with:
         node-version: '24'
         package-manager-cache: false
-    - name: Store this PR preview
+    - name: Store this build on the Pages branch
       id: store
       shell: bash
       env:
@@ -36,6 +39,7 @@ runs:
         GROMA_THEME: ${{ inputs.theme }}
         GROMA_PULL_REQUEST: ${{ inputs.pull-request }}
         GROMA_BASE: ${{ inputs.base }}
+        GROMA_REVISION: ${{ inputs.revision }}
       run: node "$GITHUB_ACTION_PATH/publish.mjs" store
     - uses: actions/upload-pages-artifact@v4
       if: steps.store.outputs.ready == 'true'
@@ -44,9 +48,9 @@ runs:
     - uses: actions/deploy-pages@v4
       if: steps.store.outputs.ready == 'true'
       id: deploy
-    - name: Update comparison comment
+    - name: Link the publication
       if: steps.store.outputs.ready == 'true'
-      id: comment
+      id: link
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
@@ -54,5 +58,6 @@ runs:
         GROMA_THEME: ${{ inputs.theme }}
         GROMA_PULL_REQUEST: ${{ inputs.pull-request }}
         GROMA_BASE: ${{ inputs.base }}
+        GROMA_REVISION: ${{ inputs.revision }}
         GROMA_PAGE_URL: ${{ steps.deploy.outputs.page_url }}
-      run: node "$GITHUB_ACTION_PATH/publish.mjs" comment
+      run: node "$GITHUB_ACTION_PATH/publish.mjs" link
