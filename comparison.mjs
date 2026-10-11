@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -29,16 +30,19 @@ export function summarize(payload) {
   };
 }
 
-// Export reads committed Markdown and source. Disable optional scanner outline hooks:
-// a PR must not load a repository-selected JavaScript module, even in a read-only job.
-export async function exportComparison({ configFile, directory, from, revision, execute = run }) {
-  const original = await readFile(configFile, 'utf8');
-  const config = JSON.parse(original);
+// The empty working root has no plugin configuration. Git still reads the existing
+// repository's committed architecture and source, without loading project scanner hooks.
+export async function exportComparison({ repositoryRoot, directory, from, revision, execute = run }) {
+  const { stdout } = await run('git', ['rev-parse', '--absolute-git-dir'], { cwd: repositoryRoot });
+  const root = await mkdtemp(path.join(os.tmpdir(), 'groma-comparison-'));
   try {
-    await writeFile(configFile, JSON.stringify({ ...config, scanners: [] }));
-    await execute('groma', ['export', directory, '--from', from, '--revision', revision]);
+    await mkdir(path.join(root, 'groma'));
+    await execute('groma', ['export', path.resolve(repositoryRoot, directory), '--from', from, '--revision', revision], {
+      cwd: root,
+      env: { ...process.env, GIT_DIR: stdout.trim(), GIT_WORK_TREE: root },
+    });
   } finally {
-    await writeFile(configFile, original);
+    await rm(root, { recursive: true, force: true });
   }
   const payload = readPayload(await readFile(path.join(directory, 'index.html'), 'utf8'));
   const summary = summarize(payload);
@@ -49,7 +53,7 @@ export async function exportComparison({ configFile, directory, from, revision, 
 
 if (process.argv[1] === import.meta.filename) {
   const summary = await exportComparison({
-    configFile: process.env.GROMA_CONFIG,
+    repositoryRoot: process.cwd(),
     directory: process.env.GROMA_EXPORT,
     from: process.env.GROMA_FROM,
     revision: process.env.GROMA_REVISION,

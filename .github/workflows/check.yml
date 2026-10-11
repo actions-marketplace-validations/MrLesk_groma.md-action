@@ -48,6 +48,7 @@ jobs:
         run: |
           git config user.name 'Groma fixture'
           git config user.email 'fixture@example.com'
+          mv groma/scanners.json groma/plugins.json
           git add groma src examples
           git commit -m 'Before'
           echo "from=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -68,9 +69,9 @@ jobs:
           JS
           node --input-type=module -e '
             import {readFileSync, writeFileSync} from "node:fs";
-            const config = JSON.parse(readFileSync("groma/scanners.json"));
+            const config = JSON.parse(readFileSync("groma/plugins.json"));
             config.scanners.find(scanner => scanner.id === "javascript").source = "./fixture-scanner";
-            writeFileSync("groma/scanners.json", JSON.stringify(config));
+            writeFileSync("groma/plugins.json", JSON.stringify(config));
           '
 
       - name: Build committed comparison

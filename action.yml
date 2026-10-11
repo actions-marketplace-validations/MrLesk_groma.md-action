@@ -87,5 +87,4 @@ runs:
         GROMA_EXPORT: ${{ steps.prepare.outputs.export-directory }}
         GROMA_FROM: ${{ inputs.from }}
         GROMA_REVISION: ${{ inputs.revision }}
-        GROMA_CONFIG: ${{ steps.prepare.outputs.config }}
       run: node "$GITHUB_ACTION_PATH/comparison.mjs"

@@ -106,4 +106,14 @@ describe('workflow configuration', { concurrency: true }, () => {
     assert.equal(await readFile(filename, 'utf8'), original);
   });
 
+  it('prepares committed comparisons with plugins.json and no scanner configuration', async t => {
+    const root = await checkout(t);
+    const filename = path.join(root, 'groma/plugins.json');
+    await rename(path.join(root, 'groma/scanners.json'), filename);
+    const original = await readFile(filename, 'utf8');
+    const result = await prepare(root, '', 'blueprint', { GROMA_FROM: 'base', GROMA_REVISION: 'head' });
+    assert.equal(result['export-directory'], path.join(root, 'website root/architecture/blueprint'));
+    assert.equal(await readFile(filename, 'utf8'), original);
+  });
+
 });

@@ -20,16 +20,19 @@ if (!directory || !['index.md', 'project.md'].every(file => existsSync(path.join
   throw new Error('Initialize Groma locally with groma init and commit its project files before using this Action.');
 }
 
-const filename = path.join(directory, 'scanners.json');
-const config = JSON.parse(await readFile(filename, 'utf8'));
-if (patterns.length > 0) {
-  config.exclude = [...(config.exclude ?? []), ...patterns];
-  await writeFile(filename, JSON.stringify(config, null, 2) + '\n');
+let scannerKey = '';
+if (!from) {
+  const filename = path.join(directory, 'scanners.json');
+  const config = JSON.parse(await readFile(filename, 'utf8'));
+  if (patterns.length > 0) {
+    config.exclude = [...(config.exclude ?? []), ...patterns];
+    await writeFile(filename, JSON.stringify(config, null, 2) + '\n');
+  }
+  const sources = config.scanners.map(scanner => scanner.source).sort();
+  scannerKey = createHash('sha256').update(JSON.stringify(sources)).digest('hex');
 }
 
-const sources = config.scanners.map(scanner => scanner.source).sort();
-const scannerKey = createHash('sha256').update(JSON.stringify(sources)).digest('hex');
 const output = path.resolve(process.env.GROMA_OUTPUT);
 const exportDirectory = path.join(output, 'architecture', theme);
 await appendFile(process.env.GITHUB_OUTPUT,
-  `output=${output}\nexport-directory=${exportDirectory}\nscanner-key=${scannerKey}\nconfig=${filename}\n`);
+  `output=${output}\nexport-directory=${exportDirectory}\nscanner-key=${scannerKey}\n`);

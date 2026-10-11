@@ -20,7 +20,7 @@ Keep your publisher. Run the build Action with `from` and `revision` (check out 
 
 ### What runs on a PR
 
-- `compare` is read-only. It keeps the trusted base checked out and fetches the PR commit as data. Groma exports both committed snapshots without scanning, installing application dependencies or running PR scripts. Keep checkout's fork protection enabled.
+- `compare` is read-only. It keeps the trusted base checked out and fetches the PR commit as data. Groma exports both committed snapshots from an empty temporary working directory, without project plugin configuration, scanning, installing application dependencies or running PR scripts. The checkout's settings remain unchanged. Keep checkout's fork protection enabled.
 - `publish` receives the selected PR number and exact base commit, deploys the preview to Pages and updates the comment. It skips publication if the PR head or base has changed. Keep PR-supplied commands out of this job.
 - Previews stay at `/pr-<number>/architecture/auto/` after the PR closes. They are public unless the repository is private: a private repository needs private Pages visibility, because previews include source code, and the publisher refuses to deploy it to a public site.
 
