@@ -38,6 +38,12 @@ jobs:
         shell: bash
         run: |
           cp -R .action/test/fixtures/project/. .
+          node --input-type=module -e '
+            import {readFileSync, writeFileSync, unlinkSync} from "node:fs";
+            const {workSources, automaticUpdates, ...config} = JSON.parse(readFileSync("groma/config.json"));
+            writeFileSync("groma/scanners.json", JSON.stringify(config));
+            unlinkSync("groma/config.json");
+          '
           git init --quiet -b main
 
       - name: Build architecture website
@@ -49,8 +55,11 @@ jobs:
           exclude: |
             /examples/
 
-      - name: Verify the default Groma version
-        run: test "$(groma --version)" = "0.7.0"
+      - name: Verify the default Groma version and project upgrade
+        run: |
+          test "$(groma --version)" = "0.7.0"
+          test -f groma/config.json
+          test ! -e groma/scanners.json
 
       - name: Verify exported architecture
         env:

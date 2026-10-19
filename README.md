@@ -36,7 +36,7 @@ For a repository without a Pages site, set the Pages source to **GitHub Actions*
     theme: blueprint
 ```
 
-The Action reads `config.json`, restores missing plugins and updates npm scanners to their latest compatible releases before scanning and exporting. Background updates are disabled only in the CI working copy so they cannot race the export. Scanner settings and Backlog selection are preserved. It doesn't initialize Groma.
+The Action requires Groma 0.7 or newer. It lets the CLI convert an existing `scanners.json` before reading `config.json`, then restores missing plugins and updates npm scanners to their latest compatible releases before scanning and exporting. Background updates are disabled only in the CI working copy so they cannot race the export. Scanner settings and Backlog selection are preserved. It doesn't initialize Groma.
 
 ## Inputs and outputs
 

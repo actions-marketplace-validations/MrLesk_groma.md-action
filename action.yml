@@ -50,6 +50,11 @@ runs:
         npm install --global "groma.md@$GROMA_VERSION"
         echo "version=$(groma --version)" >> "$GITHUB_OUTPUT"
 
+    - name: Read project configuration
+      if: inputs.from == '' && inputs.revision == ''
+      shell: bash
+      run: groma plugin list
+
     - name: Prepare project
       id: prepare
       shell: bash
