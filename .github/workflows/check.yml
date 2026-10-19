@@ -3,6 +3,7 @@ name: Check
 on:
   push:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -10,6 +11,23 @@ permissions:
 
 jobs:
   check:
+    name: check-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: npm run check
+
+  release-smoke:
+    # Draft preparation can target an unpublished CLI; readiness triggers the real npm smoke.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && !github.event.pull_request.draft)
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -32,10 +50,7 @@ jobs:
             /examples/
 
       - name: Verify the default Groma version
-        run: test "$(groma --version)" = "0.6.5"
-
-      - name: Check workflow inputs
-        run: npm --prefix .action run check
+        run: test "$(groma --version)" = "0.7.0"
 
       - name: Verify exported architecture
         env:
@@ -48,7 +63,6 @@ jobs:
         run: |
           git config user.name 'Groma fixture'
           git config user.email 'fixture@example.com'
-          mv groma/scanners.json groma/plugins.json
           git add groma src examples
           git commit -m 'Before'
           echo "from=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -69,22 +83,22 @@ jobs:
           JS
           node --input-type=module -e '
             import {readFileSync, writeFileSync} from "node:fs";
-            const config = JSON.parse(readFileSync("groma/plugins.json"));
+            const config = JSON.parse(readFileSync("groma/config.json"));
             config.scanners.find(scanner => scanner.id === "javascript").source = "./fixture-scanner";
-            writeFileSync("groma/plugins.json", JSON.stringify(config));
+            writeFileSync("groma/config.json", JSON.stringify(config));
           '
 
       - name: Build committed comparison
         id: comparison
         uses: ./.action
         with:
-          groma-version: '0.6.6'
+          groma-version: '0.7.0'
           output: comparison-site
           from: ${{ steps.commits.outputs.from }}
           revision: ${{ steps.commits.outputs.revision }}
 
       - name: Verify the selected Groma version
-        run: test "$(groma --version)" = "0.6.6"
+        run: test "$(groma --version)" = "0.7.0"
 
       - name: Verify committed comparison
         env:

@@ -3,5 +3,7 @@
     { "id": "javascript", "source": "@groma/scanner-javascript@0.2.0", "include": ["**/*.js"] },
     { "id": "typescript", "source": "@groma/scanner-typescript@0.2.0", "include": ["**/*.ts"] }
   ],
-  "exclude": ["**/*.generated.*"]
+  "workSources": [],
+  "exclude": ["**/*.generated.*"],
+  "automaticUpdates": false
 }

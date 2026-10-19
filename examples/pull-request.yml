@@ -50,7 +50,7 @@ jobs:
       - uses: MrLesk/groma.md-action@v1
         id: map
         with:
-          groma-version: '0.6.5'
+          groma-version: '0.7.0'
           from: ${{ steps.commits.outputs.from }}
           revision: ${{ steps.pull.outputs.head }}
       - uses: actions/upload-artifact@v4

@@ -32,7 +32,7 @@ for (const fail of [false, true]) {
     t.after(() => rm(root, { recursive: true, force: true }));
     await run('git', ['init', '--quiet', root]);
     await mkdir(path.join(root, 'groma'));
-    const configFile = path.join(root, 'groma/plugins.json');
+    const configFile = path.join(root, 'groma/config.json');
     const original = '{ "scanners": [{"source":"./local-scanner"}], "workSources": [{"source":"./local-work-source"}] }\n';
     await writeFile(configFile, original);
     let exportRoot;
@@ -46,7 +46,7 @@ for (const fail of [false, true]) {
       assert.equal(options.env.GIT_WORK_TREE, exportRoot);
       assert.equal(await readFile(configFile, 'utf8'), original);
       const git = await run('git', ['rev-parse', '--absolute-git-dir'], options);
-      assert.equal(git.stdout.trim(), path.join(root, '.git'));
+      assert.equal(path.resolve(git.stdout.trim()), path.join(root, '.git'));
       if (fail) throw new Error('export failed');
       await writeFile(path.join(root, 'index.html'), `<script type="application/json" id="world">${JSON.stringify(payload)}</script>`);
     };

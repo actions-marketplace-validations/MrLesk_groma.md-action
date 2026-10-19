@@ -21,11 +21,15 @@ if (!directory || !['index.md', 'project.md'].every(file => existsSync(path.join
 }
 
 let scannerKey = '';
+let configFile = '';
 if (!from) {
-  const filename = path.join(directory, 'scanners.json');
+  const filename = path.join(directory, 'config.json');
+  configFile = filename;
   const config = JSON.parse(await readFile(filename, 'utf8'));
-  if (patterns.length > 0) {
-    config.exclude = [...(config.exclude ?? []), ...patterns];
+  if (patterns.length > 0) config.exclude = [...(config.exclude ?? []), ...patterns];
+  // This working copy updates explicitly before scanning; no detached update may race its export.
+  if (patterns.length > 0 || config.automaticUpdates !== false) {
+    config.automaticUpdates = false;
     await writeFile(filename, JSON.stringify(config, null, 2) + '\n');
   }
   const sources = config.scanners.map(scanner => scanner.source).sort();
@@ -35,4 +39,4 @@ if (!from) {
 const output = path.resolve(process.env.GROMA_OUTPUT);
 const exportDirectory = path.join(output, 'architecture', theme);
 await appendFile(process.env.GITHUB_OUTPUT,
-  `output=${output}\nexport-directory=${exportDirectory}\nscanner-key=${scannerKey}\n`);
+  `output=${output}\nexport-directory=${exportDirectory}\nscanner-key=${scannerKey}\nconfig-file=${configFile}\n`);

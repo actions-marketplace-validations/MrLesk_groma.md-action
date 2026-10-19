@@ -34,13 +34,17 @@ async function prepare(root, exclude = '', theme = 'auto', revisions = {}) {
 describe('workflow configuration', { concurrency: true }, () => {
   it('appends literal ordered patterns while retaining scanner selections and settings', async t => {
     const root = await checkout(t);
-    const filename = path.join(root, 'groma/scanners.json');
+    const filename = path.join(root, 'groma/config.json');
     const config = JSON.parse(await readFile(filename, 'utf8'));
     config.scanners[0].settings = { input: 'src/client.js' };
+    config.workSources = [{ id: 'backlog', version: '1.53.0' }];
+    config.automaticUpdates = true;
     await writeFile(filename, JSON.stringify(config));
     const result = await prepare(root, '/examples/\r\n!examples/keep.js\r\n\n');
     const actual = JSON.parse(await readFile(filename, 'utf8'));
     assert.deepEqual(actual.scanners, config.scanners);
+    assert.deepEqual(actual.workSources, config.workSources);
+    assert.equal(actual.automaticUpdates, false);
     assert.deepEqual(actual.exclude, ['**/*.generated.*', '/examples/', '!examples/keep.js']);
     assert.equal(result.output, path.join(root, 'website root'));
     assert.equal(result['export-directory'], path.join(result.output, 'architecture/auto'));
@@ -50,7 +54,7 @@ describe('workflow configuration', { concurrency: true }, () => {
     it('preserves an unchanged configuration in ' + directory, async t => {
       const root = await checkout(t);
       if (directory === '.groma') await rename(path.join(root, 'groma'), path.join(root, directory));
-      const filename = path.join(root, directory, 'scanners.json');
+      const filename = path.join(root, directory, 'config.json');
       const before = await readFile(filename, 'utf8');
       await prepare(root, ' \n');
       assert.equal(await readFile(filename, 'utf8'), before);
@@ -68,7 +72,7 @@ describe('workflow configuration', { concurrency: true }, () => {
     const first = await prepare(root);
     const excluded = await prepare(root, '/examples/');
     assert.equal(first['scanner-key'], excluded['scanner-key']);
-    const filename = path.join(root, 'groma/scanners.json');
+    const filename = path.join(root, 'groma/config.json');
     const config = JSON.parse(await readFile(filename, 'utf8'));
     config.scanners[0].source = '@groma/scanner-javascript@0.3.0';
     await writeFile(filename, JSON.stringify(config));
@@ -89,14 +93,14 @@ describe('workflow configuration', { concurrency: true }, () => {
 
   it('rejects a theme outside the supported choices before changing scanner configuration', async t => {
     const root = await checkout(t);
-    const filename = path.join(root, 'groma/scanners.json');
+    const filename = path.join(root, 'groma/config.json');
     const before = await readFile(filename, 'utf8');
     await assert.rejects(prepare(root, '/examples/', 'sepia'), error => error.code !== 0 && error.stderr.includes('theme'));
     assert.equal(await readFile(filename, 'utf8'), before);
   });
   it('requires both comparison commits and rejects scan exclusions without changing config', async t => {
     const root = await checkout(t);
-    const filename = path.join(root, 'groma/scanners.json');
+    const filename = path.join(root, 'groma/config.json');
     const original = await readFile(filename, 'utf8');
     await assert.rejects(prepare(root, '', 'auto', { GROMA_FROM: 'base' }), /both from and revision/);
     await assert.rejects(prepare(root, '', 'auto', { GROMA_REVISION: 'head' }), /both from and revision/);
@@ -106,10 +110,9 @@ describe('workflow configuration', { concurrency: true }, () => {
     assert.equal(await readFile(filename, 'utf8'), original);
   });
 
-  it('prepares committed comparisons with plugins.json and no scanner configuration', async t => {
+  it('prepares committed comparisons without changing project plugin configuration', async t => {
     const root = await checkout(t);
-    const filename = path.join(root, 'groma/plugins.json');
-    await rename(path.join(root, 'groma/scanners.json'), filename);
+    const filename = path.join(root, 'groma/config.json');
     const original = await readFile(filename, 'utf8');
     const result = await prepare(root, '', 'blueprint', { GROMA_FROM: 'base', GROMA_REVISION: 'head' });
     assert.equal(result['export-directory'], path.join(root, 'website root/architecture/blueprint'));
