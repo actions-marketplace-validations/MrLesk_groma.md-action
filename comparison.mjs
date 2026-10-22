@@ -39,7 +39,8 @@ export async function exportComparison({ repositoryRoot, directory, from, revisi
     await mkdir(path.join(root, 'groma'));
     await execute('groma', ['export', path.resolve(repositoryRoot, directory), '--from', from, '--revision', revision], {
       cwd: root,
-      env: { ...process.env, GIT_DIR: stdout.trim(), GIT_WORK_TREE: root },
+      env: Object.fromEntries(Object.entries({ ...process.env, GIT_DIR: stdout.trim(), GIT_WORK_TREE: root })
+        .filter(([key]) => key.toUpperCase() !== 'GIT_SSL_NO_VERIFY')),
     });
   } finally {
     await rm(root, { recursive: true, force: true });

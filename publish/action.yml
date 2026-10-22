@@ -26,14 +26,27 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v7
+    - name: Prepare filtered TLS trust before network steps
+      uses: actions/github-script@v9.0.0
+      env:
+        NODE_OPTIONS: --use-openssl-ca
+        GROMA_TRUST_BOOTSTRAP: ${{ github.action_path }}/../trust-bootstrap.cjs
       with:
-        node-version: '24'
+        script: |
+          const trust = require(process.env.GROMA_TRUST_BOOTSTRAP);
+          trust.exportSettings(trust.prepareWorkflowTrust(), process.env.GITHUB_ENV);
+
+    - uses: actions/setup-node@v7.1.0
+      env:
+        NODE_OPTIONS: --use-openssl-ca
+      with:
+        node-version: 26.12.1
         package-manager-cache: false
     - name: Store this build on the Pages branch
       id: store
       shell: bash
       env:
+        NODE_OPTIONS: --use-openssl-ca
         GH_TOKEN: ${{ inputs.token }}
         GROMA_DIRECTORY: ${{ inputs.directory }}
         GROMA_THEME: ${{ inputs.theme }}
@@ -41,11 +54,15 @@ runs:
         GROMA_BASE: ${{ inputs.base }}
         GROMA_REVISION: ${{ inputs.revision }}
       run: node "$GITHUB_ACTION_PATH/publish.mjs" store
-    - uses: actions/upload-pages-artifact@v4
+    - uses: actions/upload-pages-artifact@v5.0.0
+      env:
+        NODE_OPTIONS: --use-openssl-ca
       if: steps.store.outputs.ready == 'true'
       with:
         path: ${{ steps.store.outputs.site }}
-    - uses: actions/deploy-pages@v4
+    - uses: actions/deploy-pages@v5.0.1
+      env:
+        NODE_OPTIONS: --use-openssl-ca
       if: steps.store.outputs.ready == 'true'
       id: deploy
     - name: Link the publication
@@ -53,6 +70,7 @@ runs:
       id: link
       shell: bash
       env:
+        NODE_OPTIONS: --use-openssl-ca
         GH_TOKEN: ${{ inputs.token }}
         GROMA_DIRECTORY: ${{ inputs.directory }}
         GROMA_THEME: ${{ inputs.theme }}

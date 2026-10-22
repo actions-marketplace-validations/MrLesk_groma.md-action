@@ -7,6 +7,9 @@ on:
 
 permissions: {}
 
+env:
+  NODE_OPTIONS: --use-openssl-ca
+
 jobs:
   compare:
     if: github.event.repository.private == false
@@ -14,7 +17,308 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - &prepare-trust
+        name: Prepare filtered trust before network steps
+        shell: bash
+        run: |
+          node <<'NODE'
+          // Keep the inline workflow bootstraps identical to this offline trust preparation.
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const os = require('node:os');
+          const tls = require('node:tls');
+          const { X509Certificate, createHash } = require('node:crypto');
+          const { execFileSync } = require('node:child_process');
+          const blockedSPKI = new Set([
+            "0a6c2b2ca5b364207954171987ac9d2178561569d8205457e77ca90c32ede282",
+            "43bffa19d6ef651451f6841e019931e96f6f2eaeff28ab4b6f1ce4576de2717b",
+            "49dd353dc2b919a3770645117d0e60c16115e7d1bc259eefe734b00ea434fe5f",
+            "5c0660a2b164910d8ff589c18e14552e9e0ec237dcefe2cb736d41a4811f81a0",
+            "63ecefee431d49523bc1136c4e72d0206a477086caf606cd5cf025686c109cf8",
+            "8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782",
+            "92c063d67e8f14db71d288e11266ffdaf69cbf115f7bab14f3bc2f68d25e0e30",
+            "bd153ed7b0434f6886b17bce8bbe84ed340c7132d702a8f4fa318f756ecbd6f3",
+            "c619e4780ed8e0abeda24ad732567de4383a7ea941338f6d1a7d1b49ac792fe9",
+            "e0254c7fcdc265e2f0f8a428dabb75ab4ae039b4872d62f5ee57f0877d5a8a41",
+            "ebed6475c2c2d80fcb199f3fe8dd6e6b3ce60b77eb15d4e42c3dec0c6f5b5105",
+            "ec4ffa1ad0ac88081314b7aaffef6a91f97cd57291bb5ba686c5415f5eb4f6b6"
+          ]);
+
+          function filterAuthorities(inputs, allowEmpty = false) {
+            const certificates = new Map();
+            for (const input of inputs.flat(Infinity)) {
+              if (!input || !String(input).trim()) continue;
+              const matches = String(input).match(/-----BEGIN ((?:TRUSTED )?CERTIFICATE)-----[\s\S]+?-----END \1-----/g);
+              if (!matches) throw new Error('Configured CA input contains no PEM certificates.');
+              for (const pem of matches) {
+                const certificate = new X509Certificate(pem);
+                const key = createHash('sha256').update(certificate.publicKey.export({ type: 'spki', format: 'der' })).digest('hex');
+                if (!blockedSPKI.has(key)) {
+                  // OpenSSL AUX trust/reject directives must survive unchanged and must
+                  // not be merged with a plain certificate or a different AUX policy.
+                  const trusted = pem.startsWith('-----BEGIN TRUSTED CERTIFICATE-----');
+                  certificates.set(trusted ? pem : certificate.fingerprint256, trusted ? pem : certificate.toString());
+                }
+              }
+            }
+            if (!certificates.size) {
+              if (allowEmpty) return '';
+              throw new Error('No trusted certificate authorities remain.');
+            }
+            return [...certificates.values()].join('\n') + '\n';
+          }
+
+          function nativeNpm(args, { env = process.env, execute = execFileSync } = {}) {
+            // Only fixed config/root queries use Windows' command wrapper; install arguments never use a shell.
+            return execute(process.platform === 'win32' ? 'npm.cmd' : 'npm', args,
+              { env, encoding: 'utf8', shell: process.platform === 'win32' }).trim();
+          }
+
+          function npmCLI({ env = process.env, query = nativeNpm, exists = fs.existsSync } = {}) {
+            const root = query(['root', '--global'], { env });
+            const candidates = [path.join(root, 'npm', 'bin', 'npm-cli.js'),
+              path.resolve(path.dirname(process.execPath), '../lib/node_modules/npm/bin/npm-cli.js'),
+              path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js')];
+            const cli = candidates.find(candidate => exists(candidate));
+            if (!cli) throw new Error('Cannot locate the native npm CLI.');
+            return cli;
+          }
+
+          function npmAuthorities({ env = process.env } = {}) {
+            const cli = npmCLI({ env });
+            // Resolve the same effective CA as native npm, including precedence between ca
+            // and cafile across configuration sources. Print only public CA certificates.
+            const source = `
+              const fs = require('node:fs');
+              const path = require('node:path');
+              const root = process.argv[1];
+              const Config = require(path.join(root, 'node_modules/@npmcli/config'));
+              const { definitions, flatten, shorthands, nerfDarts } = require(path.join(root, 'node_modules/@npmcli/config/lib/definitions'));
+              const config = new Config({ npmPath: root, definitions, flatten, shorthands, nerfDarts,
+                argv: [process.execPath, path.join(root, 'bin/npm-cli.js'), '--global'], warn: false });
+              config.load().then(() => {
+                // npm silently ignores unreadable cafiles. Reject that only when the file
+                // is the effective selection; a later inline CA can legitimately replace it.
+                let selectedFile;
+                for (const { data } of config.data.values()) for (const key of Object.keys(data)) {
+                  if (key === 'ca') selectedFile = undefined;
+                  else if (key === 'cafile' && data[key]) selectedFile = data[key];
+                }
+                if (selectedFile) fs.readFileSync(selectedFile);
+                console.log(JSON.stringify(config.flat.ca ?? null));
+              }).catch(() => { console.error('Cannot read native npm CA configuration.'); process.exitCode = 1; });
+            `;
+            const value = JSON.parse(execFileSync(process.execPath,
+              ['-e', source, path.resolve(path.dirname(cli), '..')], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+            return value === null ? null : Array.isArray(value) ? value : [value];
+          }
+
+          function gitEnvironmentValue(env, key) {
+            return env[key] ?? (process.platform === 'win32'
+              ? env[Object.keys(env).find(name => name.toUpperCase() === key)] : undefined);
+          }
+
+          function repositoryURLs(env) {
+            if (!env.GITHUB_SERVER_URL || !env.GITHUB_REPOSITORY) return [];
+            const repository = new URL(`${env.GITHUB_SERVER_URL.replace(/\/+$/, '')}/${env.GITHUB_REPOSITORY}`);
+            if (repository.username || repository.password) throw new Error('GitHub server URL must not contain credentials.');
+            if (repository.protocol !== 'https:') return [];
+            return [repository.href, `${repository.href}.git`].map(url => {
+              let effective = url;
+              try {
+                // This expands insteadOf without connecting. Trust must match Git's actual destination.
+                effective = execFileSync('git', ['ls-remote', '--get-url', url],
+                  { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+              } catch (error) {
+                if (error.code !== 'ENOENT') throw new Error('Cannot resolve the Git repository URL.');
+              }
+              effective = effective.replace(/^(?:http|https|ftp|ftps)::(?=https?:\/\/)/i, '');
+              if (!/^https?:\/\//i.test(effective)) return url; // SSH/local rewrites do not use HTTP trust.
+              try { new URL(effective); } catch { throw new Error('Invalid effective Git HTTP URL.'); }
+              // Keep Git-significant username escaping; never copy a rewritten password to argv or workflow env.
+              return effective.replace(/^([a-z][a-z0-9+.-]*:\/\/)([^/?#]*)/i, (_, prefix, authority) => {
+                const at = authority.lastIndexOf('@');
+                return at < 0 ? prefix + authority : prefix + authority.slice(0, at).split(':', 1)[0] + '@' + authority.slice(at + 1);
+              });
+            });
+          }
+
+          function trustSettings(bundle, empty, env = process.env, selectedGit = []) {
+            const git = [['http.schannelUseSSLCAInfo', 'true'], ['http.sslVerify', 'true']];
+            // Limit checkout/publication defaults to this repository. Other Git remotes
+            // retain their own CA policy, which Groma filters before scanner downloads.
+            for (const url of repositoryURLs(env)) {
+              git.push([`http.${url}.sslVerify`, 'true'], [`http.${url}.schannelUseSSLCAInfo`, 'true'],
+                [`http.${url}.sslCAInfo`, bundle], [`http.${url}.sslCAPath`, empty]);
+            }
+            git.push(...selectedGit);
+            const raw = gitEnvironmentValue(env, 'GIT_CONFIG_COUNT') ?? '0';
+            if (!/^(0|[1-9][0-9]*)$/.test(raw) || !Number.isSafeInteger(Number(raw) + git.length)) {
+              throw new Error('Invalid GIT_CONFIG_COUNT.');
+            }
+            const count = Number(raw);
+            const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+            return {
+              SSL_CERT_FILE: bundle, SSL_CERT_DIR: empty,
+              NODE_EXTRA_CA_CERTS: bundle, NODE_USE_SYSTEM_CA: '0', NODE_TLS_REJECT_UNAUTHORIZED: '1',
+              GIT_PROXY_SSL_CAINFO: path.join(bundle + '.no-https-proxy', 'unavailable.pem'),
+              CURL_CA_BUNDLE: bundle, CARGO_HTTP_CAINFO: bundle,
+              NPM_CONFIG_CAFILE: bundle, npm_config_cafile: bundle,
+              NPM_CONFIG_STRICT_SSL: 'true', npm_config_strict_ssl: 'true',
+              GIT_CONFIG_COUNT: String(count + git.length),
+              GIT_CONFIG_PARAMETERS: [gitEnvironmentValue(env, 'GIT_CONFIG_PARAMETERS'),
+                ...git.map(([key, value]) => quote(key) + '=' + quote(value))].filter(Boolean).join(' '),
+              ...Object.fromEntries(git.flatMap(([key, value], offset) => [
+                [`GIT_CONFIG_KEY_${count + offset}`, key], [`GIT_CONFIG_VALUE_${count + offset}`, value],
+              ])),
+            };
+          }
+
+          function filteredGitTrust(env, directory, empty, read) {
+            let index = 0;
+            const selected = [], environment = {};
+            const filter = (value, isDirectory) => {
+              if (!value) {
+                if (isDirectory) return empty;
+                throw new Error('The configured Git CA file is empty.');
+              }
+              const target = path.join(directory, `git-ca-${index++}`);
+              if (!isDirectory) fs.writeFileSync(target, filterAuthorities([read(value, 'utf8')]), { mode: 0o600 });
+              else {
+                fs.mkdirSync(target);
+                const groups = new Map();
+                const directoryPEM = (contents, ordinary = false) => {
+                  const crls = contents.match(/-----BEGIN X509 CRL-----[\s\S]+?-----END X509 CRL-----/g) ?? [];
+                  let certificates = '';
+                  try {
+                    if (/-----BEGIN (?:TRUSTED )?CERTIFICATE-----/.test(contents)) certificates = filterAuthorities([contents], true);
+                  } catch (error) {
+                    if (!ordinary) throw error; // Selected hash entries stay strict.
+                    return crls.length ? crls.join('\n') : undefined;
+                  }
+                  if (!/-----BEGIN (?:TRUSTED )?CERTIFICATE-----/.test(contents) && !crls.length) return undefined;
+                  return [certificates, ...crls].filter(Boolean).join('\n');
+                };
+                for (const name of fs.readdirSync(value)) {
+                  const source = path.join(value, name);
+                  let contents;
+                  try {
+                    if (!fs.statSync(source).isFile()) continue;
+                    contents = read(source, 'utf8');
+                  } catch (error) {
+                    if (error.code === 'ENOENT') continue; // Native Git skips dangling directory entries.
+                    throw error;
+                  }
+                  // GnuTLS also reads ordinary PEM filenames. Keep native directory lookup
+                  // semantics instead of promoting these authorities into the CA file.
+                  const match = /^([a-f0-9]{8})\.(0|[1-9][0-9]*)$/i.exec(name);
+                  const pem = directoryPEM(contents, !match);
+                  // Keep unknown regular-file hash slots as empty markers. Git backends
+                  // differ in whether they continue lookup after these slots.
+                  if (pem || match) fs.writeFileSync(path.join(target, name), pem ?? '', { mode: 0o600 });
+                  if (!match) continue;
+                  if (!groups.has(match[1])) groups.set(match[1], new Set());
+                  groups.get(match[1]).add(Number(match[2]));
+                }
+                for (const [hash, entries] of groups) {
+                  let input = 0, output = 0;
+                  // OpenSSL ignores later entries after a gap. Keep the retained chain contiguous.
+                  while (entries.has(input)) {
+                    const pem = directoryPEM(read(path.join(value, `${hash}.${input++}`), 'utf8'));
+                    if (pem === undefined) break; // Preserve an unrecognized native entry as a lookup boundary.
+                    if (pem) fs.writeFileSync(path.join(target, `${hash}.${output++}`), pem, { mode: 0o600 });
+                  }
+                }
+              }
+              return target;
+            };
+            for (const [kind, name] of [['sslCAInfo', 'GIT_SSL_CAINFO'], ['sslCAPath', 'GIT_SSL_CAPATH']]) {
+              const explicit = gitEnvironmentValue(env, name);
+              if (explicit !== undefined) {
+                const target = filter(explicit, kind === 'sslCAPath');
+                environment[name] = target;
+                // Workflow environment files cannot delete inherited mixed-case Windows aliases.
+                if (process.platform === 'win32') for (const alias of Object.keys(env)) {
+                  if (alias.toUpperCase() === name) environment[alias] = target;
+                }
+                continue;
+              }
+              for (const url of repositoryURLs(env)) {
+                let value;
+                try {
+                  value = execFileSync('git', ['config', '--null', '--path', '--get-urlmatch', `http.${kind}`, url],
+                    { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).replace(/\0$/, '');
+                } catch (error) {
+                  if (error.code === 'ENOENT' || error.status === 1) continue;
+                  throw new Error('Cannot inspect Git CA configuration.');
+                }
+                selected.push([`http.${url}.${kind}`, filter(value, kind === 'sslCAPath')]);
+              }
+            }
+            return { selected, environment };
+          }
+
+          function prepareTrust({ env = process.env, bundled = tls.rootCertificates,
+            getCertificates = tls.getCACertificates?.bind(tls), npmInputs, read = fs.readFileSync,
+            directory = fs.mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), 'groma-tls-')) } = {}) {
+            if (Object.keys(env).some(key => key.toUpperCase() === 'GIT_SSL_NO_VERIFY' && env[key] !== undefined)) {
+              throw new Error('Remove GIT_SSL_NO_VERIFY from the runner or workflow environment before continuing.');
+            }
+            const inputs = [...bundled];
+            if (getCertificates) for (const kind of ['default', 'system', 'extra']) inputs.push(...getCertificates(kind));
+            for (const key of ['SSL_CERT_FILE', 'NODE_EXTRA_CA_CERTS']) {
+              if (env[key]) inputs.push(read(env[key], 'utf8'));
+            }
+            const pem = filterAuthorities(inputs);
+            const bundle = path.join(directory, 'ca.pem'), empty = path.join(directory, 'empty');
+            fs.mkdirSync(empty, { recursive: true });
+            fs.writeFileSync(bundle, pem);
+            // Git exposes no proxy CA-directory override. An empty CA file can still fall
+            // back to system roots with GnuTLS. A child path beneath an owned regular file
+            // forces CA loading to fail; direct requests and HTTP proxies ignore it.
+            fs.writeFileSync(bundle + '.no-https-proxy', '', { mode: 0o600 });
+            const git = filteredGitTrust(env, directory, empty, read);
+            // Native Git's default CA file remains additive to a selected CA directory.
+            // Use OS authorities only; Node's bundled/extra roots are not Git defaults.
+            const defaults = git.environment.GIT_SSL_CAINFO !== undefined ? [] : repositoryURLs(env)
+              .filter(url => !git.selected.some(([key]) => key === `http.${url}.sslCAInfo`));
+            for (const [index, url] of defaults.entries()) {
+              const selectedBundle = path.join(directory, `git-default-ca-${index}.pem`);
+              fs.writeFileSync(selectedBundle, filterAuthorities(getCertificates?.('system') ?? []), { mode: 0o600 });
+              git.selected.push([`http.${url}.sslCAInfo`, selectedBundle]);
+            }
+            const selectedNpm = npmInputs === undefined ? npmAuthorities({ env }) : npmInputs;
+            const npmBundle = path.join(directory, 'npm-ca.pem');
+            fs.writeFileSync(npmBundle, selectedNpm === null ? pem : filterAuthorities(selectedNpm));
+            const settings = { ...trustSettings(bundle, empty, env, git.selected), ...git.environment,
+              NPM_CONFIG_CAFILE: npmBundle, npm_config_cafile: npmBundle };
+            if (process.platform === 'win32') for (const alias of Object.keys(env)) {
+              const canonical = alias.toUpperCase();
+              if (alias !== canonical && ['GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_PROXY_SSL_CAINFO'].includes(canonical)) settings[alias] = settings[canonical];
+            }
+            return settings;
+          }
+
+          // Composite actions run this with the runner's own Node before setup-node. npm
+          // is not available yet, and its original CA configuration must survive until setup.
+          function prepareWorkflowTrust(options = {}) {
+            const settings = prepareTrust({ ...options, npmInputs: null });
+            delete settings.NPM_CONFIG_CAFILE;
+            delete settings.npm_config_cafile;
+            return settings;
+          }
+
+          function exportSettings(settings, filename) {
+            if (!filename) throw new Error('GITHUB_ENV is required.');
+            if (Object.hasOwn(settings, 'NODE_OPTIONS') || Object.values(settings).some(value => /[\r\n]/.test(value))) {
+              throw new Error('Invalid workflow environment setting.');
+            }
+            fs.appendFileSync(filename, Object.entries(settings).map(([key, value]) => `${key}=${value}\n`).join(''));
+          }
+
+          exportSettings(prepareTrust(), process.env.GITHUB_ENV);
+          NODE
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -25,12 +329,12 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: echo "from=$(git merge-base "$BASE" "$HEAD")" >> "$GITHUB_OUTPUT"
-      - uses: MrLesk/groma.md-action@8cb1154f99dc323f51f47af52be66086870f3809
+      - uses: MrLesk/groma.md-action@v1
         id: map
         with:
           from: ${{ steps.commits.outputs.from }}
           revision: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: groma-comparison
           path: ${{ steps.map.outputs.output }}
@@ -52,11 +356,12 @@ jobs:
       name: github-pages
       url: ${{ steps.preview.outputs.url }}
     steps:
-      - uses: actions/download-artifact@v4
+      - *prepare-trust
+      - uses: actions/download-artifact@v8.0.2
         with:
           name: groma-comparison
           path: comparison
-      - uses: MrLesk/groma.md-action/publish@8cb1154f99dc323f51f47af52be66086870f3809
+      - uses: MrLesk/groma.md-action/publish@v1
         id: preview
         with:
           directory: comparison

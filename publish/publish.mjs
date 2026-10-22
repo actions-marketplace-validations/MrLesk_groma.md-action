@@ -101,16 +101,30 @@ export async function replaceMap(site, artifact) {
   await cp(path.join(artifact, 'architecture'), destination, { recursive: true });
 }
 
-async function storeSite(context) {
+export function publicationGitEnvironment(inherited) {
+  const raw = inherited.GIT_CONFIG_COUNT ?? '0';
+  if (!/^(0|[1-9][0-9]*)$/.test(raw) || !Number.isSafeInteger(Number(raw) + 1)) {
+    throw new Error('Invalid GIT_CONFIG_COUNT.');
+  }
+  const count = Number(raw);
+  const credential = Buffer.from(`x-access-token:${inherited.GH_TOKEN}`).toString('base64');
+  const env = Object.fromEntries(Object.entries(inherited)
+    .filter(([key]) => key.toUpperCase() !== 'GIT_SSL_NO_VERIFY'));
+  return { ...env, GIT_CONFIG_COUNT: String(count + 1),
+    [`GIT_CONFIG_KEY_${count}`]: `http.${inherited.GITHUB_SERVER_URL}/.extraheader`,
+    [`GIT_CONFIG_VALUE_${count}`]: `AUTHORIZATION: basic ${credential}` };
+}
+
+export async function storeSite(context) {
   const site = await mkdtemp(path.join(process.env.RUNNER_TEMP, 'groma-pages-'));
-  const credential = Buffer.from(`x-access-token:${process.env.GH_TOKEN}`).toString('base64');
-  const env = { ...process.env, GIT_CONFIG_COUNT: '1',
-    GIT_CONFIG_KEY_0: `http.${process.env.GITHUB_SERVER_URL}/.extraheader`,
-    GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${credential}` };
+  const env = publicationGitEnvironment(process.env);
   const git = async (...args) => (await run('git', args, { cwd: site, env })).stdout.trim();
   const remote = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}.git`;
   await git('init', '--quiet', '-b', branch);
   await git('remote', 'add', 'origin', remote);
+  if (await git('remote', 'get-url', '--push', 'origin') !== await git('remote', 'get-url', 'origin')) {
+    throw new Error('Pages publication requires the same Git fetch and push URL. Remove the separate push URL rewrite.');
+  }
   const exists = Boolean(await git('ls-remote', '--heads', 'origin', branch));
   if (exists) {
     await git('fetch', '--depth=1', 'origin', branch);
