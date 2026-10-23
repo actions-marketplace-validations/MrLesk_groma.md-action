@@ -8,7 +8,7 @@ branding:
 inputs:
   groma-version:
     description: Groma CLI version to install. Pin this to control architecture reader upgrades.
-    default: 0.7.6
+    default: 0.7.7
   output:
     description: Website root, relative to the repository root.
     default: groma-site
@@ -37,18 +37,24 @@ runs:
   using: composite
   steps:
     - name: Prepare filtered TLS trust before network steps
+      id: node-trust
       uses: actions/github-script@v9.0.0
       env:
-        NODE_OPTIONS: --use-openssl-ca
+        NODE_OPTIONS: --use-bundled-ca
         GROMA_TRUST_BOOTSTRAP: ${{ github.action_path }}/trust-bootstrap.cjs
       with:
         script: |
           const trust = require(process.env.GROMA_TRUST_BOOTSTRAP);
-          trust.exportSettings(trust.prepareWorkflowTrust(), process.env.GITHUB_ENV);
+          const settings = trust.prepareWorkflowTrust();
+          trust.exportSettings(settings.node, process.env.GITHUB_ENV);
+          core.setOutput('cafile', settings.openssl.SSL_CERT_FILE);
+          core.setOutput('capath', settings.openssl.SSL_CERT_DIR);
 
     - uses: actions/setup-node@v7.1.0
       env:
         NODE_OPTIONS: --use-openssl-ca
+        SSL_CERT_FILE: ${{ steps.node-trust.outputs.cafile }}
+        SSL_CERT_DIR: ${{ steps.node-trust.outputs.capath }}
       with:
         node-version: 26.12.1
         package-manager-cache: false
@@ -57,7 +63,7 @@ runs:
       id: groma
       shell: bash
       env:
-        NODE_OPTIONS: --use-openssl-ca
+        NODE_OPTIONS: --use-bundled-ca
         GROMA_VERSION: ${{ inputs.groma-version }}
       run: |
         node "$GITHUB_ACTION_PATH/prepare-trust.mjs" install
@@ -65,7 +71,7 @@ runs:
 
     - name: Read project configuration
       env:
-        NODE_OPTIONS: --use-openssl-ca
+        NODE_OPTIONS: --use-bundled-ca
       if: inputs.from == '' && inputs.revision == ''
       shell: bash
       run: groma plugin list
@@ -74,17 +80,20 @@ runs:
       id: prepare
       shell: bash
       env:
-        NODE_OPTIONS: --use-openssl-ca
+        NODE_OPTIONS: --use-bundled-ca
         GROMA_OUTPUT: ${{ inputs.output }}
         GROMA_THEME: ${{ inputs.theme }}
         GROMA_EXCLUDE: ${{ inputs.exclude }}
         GROMA_FROM: ${{ inputs.from }}
         GROMA_REVISION: ${{ inputs.revision }}
-      run: node "$GITHUB_ACTION_PATH/prepare.mjs"
+      # A leading slash in an ignore pattern is not a Windows filesystem path.
+      run: MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL:+$MSYS2_ENV_CONV_EXCL;}GROMA_EXCLUDE" node "$GITHUB_ACTION_PATH/prepare.mjs"
 
     - name: Cache scanner packages
       env:
         NODE_OPTIONS: --use-openssl-ca
+        SSL_CERT_FILE: ${{ steps.node-trust.outputs.cafile }}
+        SSL_CERT_DIR: ${{ steps.node-trust.outputs.capath }}
       if: inputs.from == '' && inputs.revision == ''
       uses: actions/cache@v6.1.0
       with:
@@ -95,7 +104,7 @@ runs:
       if: inputs.from == '' && inputs.revision == ''
       shell: bash
       env:
-        NODE_OPTIONS: --use-openssl-ca
+        NODE_OPTIONS: --use-bundled-ca
         GROMA_EXPORT: ${{ steps.prepare.outputs.export-directory }}
         GROMA_CONFIG: ${{ steps.prepare.outputs.config-file }}
       run: node "$GITHUB_ACTION_PATH/scan.mjs"
@@ -105,7 +114,7 @@ runs:
       id: compare
       shell: bash
       env:
-        NODE_OPTIONS: --use-openssl-ca
+        NODE_OPTIONS: --use-bundled-ca
         GROMA_EXPORT: ${{ steps.prepare.outputs.export-directory }}
         GROMA_FROM: ${{ inputs.from }}
         GROMA_REVISION: ${{ inputs.revision }}

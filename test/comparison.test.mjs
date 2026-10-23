@@ -36,8 +36,7 @@ for (const fail of [false, true]) {
     const original = '{ "scanners": [{"source":"./local-scanner"}], "workSources": [{"source":"./local-work-source"}] }\n';
     await writeFile(configFile, original);
     let exportRoot;
-    const execute = async (command, args, options) => {
-      assert.equal(command, 'groma');
+    const execute = async (args, options) => {
       assert.deepEqual(args, ['export', root, '--from', 'before', '--revision', 'after']);
       exportRoot = options.cwd;
       assert.notEqual(exportRoot, root);

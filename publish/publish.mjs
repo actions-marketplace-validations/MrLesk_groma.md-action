@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { access, appendFile, cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import trust from '../trust-bootstrap.cjs';
 
 const run = promisify(execFile);
 const branch = 'groma-previews';
@@ -117,7 +118,8 @@ export function publicationGitEnvironment(inherited) {
 
 export async function storeSite(context) {
   const site = await mkdtemp(path.join(process.env.RUNNER_TEMP, 'groma-pages-'));
-  const env = publicationGitEnvironment(process.env);
+  // This publisher owns the GitHub write token; trust overrides stay inside its Git child.
+  const env = publicationGitEnvironment({ ...process.env, ...trust.prepareTrust({ npmInputs: null }) });
   const git = async (...args) => (await run('git', args, { cwd: site, env })).stdout.trim();
   const remote = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}.git`;
   await git('init', '--quiet', '-b', branch);

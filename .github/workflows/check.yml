@@ -152,7 +152,7 @@ jobs:
           function trustSettings(bundle, empty, env = process.env, selectedGit = []) {
             const git = [['http.schannelUseSSLCAInfo', 'true'], ['http.sslVerify', 'true']];
             // Limit checkout/publication defaults to this repository. Other Git remotes
-            // retain their own CA policy, which Groma filters before scanner downloads.
+            // retain their own native Git CA policy.
             for (const url of repositoryURLs(env)) {
               git.push([`http.${url}.sslVerify`, 'true'], [`http.${url}.schannelUseSSLCAInfo`, 'true'],
                 [`http.${url}.sslCAInfo`, bundle], [`http.${url}.sslCAPath`, empty]);
@@ -307,11 +307,22 @@ jobs:
 
           // Composite actions run this with the runner's own Node before setup-node. npm
           // is not available yet, and its original CA configuration must survive until setup.
-          function prepareWorkflowTrust(options = {}) {
-            const settings = prepareTrust({ ...options, npmInputs: null });
-            delete settings.NPM_CONFIG_CAFILE;
-            delete settings.npm_config_cafile;
-            return settings;
+          function prepareWorkflowTrust({ env = process.env, bundled = tls.rootCertificates,
+            getCertificates = tls.getCACertificates?.bind(tls), read = fs.readFileSync,
+            directory = fs.mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), 'groma-node-tls-')) } = {}) {
+            const inputs = [...bundled];
+            if (getCertificates) for (const kind of ['default', 'system', 'extra']) inputs.push(...getCertificates(kind));
+            for (const key of ['SSL_CERT_FILE', 'NODE_EXTRA_CA_CERTS']) {
+              if (env[key]) inputs.push(read(env[key], 'utf8'));
+            }
+            const bundle = path.join(directory, 'node-ca.pem'), empty = path.join(directory, 'empty');
+            fs.writeFileSync(bundle, filterAuthorities(inputs), { mode: 0o600 });
+            fs.mkdirSync(empty, { recursive: true });
+            // Export only Node settings. OpenSSL settings belong to individual Node-action steps.
+            return {
+              node: { NODE_EXTRA_CA_CERTS: bundle, NODE_USE_SYSTEM_CA: '0', NODE_TLS_REJECT_UNAUTHORIZED: '1' },
+              openssl: { SSL_CERT_FILE: bundle, SSL_CERT_DIR: empty },
+            };
           }
 
           function exportSettings(settings, filename) {
@@ -331,7 +342,7 @@ jobs:
         with:
           node-version: 26.12.1
       - name: Use current npm
-        run: npm install --global npm@12.2.0 --strict-ssl=true
+        run: npm install --global npm@12.2.1 --strict-ssl=true
       - run: npm run check
 
   release-smoke:
@@ -342,7 +353,14 @@ jobs:
       (github.event_name == 'pull_request' && !github.event.pull_request.draft) ||
       (github.event_name == 'release' && !github.event.release.draft && !github.event.release.prerelease && startsWith(github.event.release.tag_name, 'v1.'))
     needs: check
-    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
     steps:
       - *prepare-trust
       - uses: actions/checkout@v7.0.1
@@ -355,8 +373,8 @@ jobs:
       - name: Require the published Groma hotfix
         shell: bash
         run: |
-          npm install --global npm@12.2.0 --strict-ssl=true
-          test "$(npm view groma.md@0.7.6 version --strict-ssl=true)" = "0.7.6"
+          npm install --global npm@12.2.1 --strict-ssl=true
+          test "$(npm view groma.md@0.7.7 version --strict-ssl=true)" = "0.7.7"
 
       - name: Prepare initialized project fixture
         shell: bash
@@ -381,7 +399,7 @@ jobs:
 
       - name: Verify the default Groma version and project upgrade
         run: |
-          test "$(groma --version)" = "0.7.6"
+          test "$(groma --version)" = "0.7.7"
           test -f groma/config.json
           test ! -e groma/scanners.json
 
@@ -399,7 +417,8 @@ jobs:
           git add groma src examples
           git commit -m 'Before'
           echo "from=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          sed -i "s/return 'catalog'/return 'updated catalog'/" src/client.js
+          node --input-type=module -e 'import {readFileSync, writeFileSync} from "node:fs";
+            writeFileSync("src/client.js", readFileSync("src/client.js", "utf8").replace("catalog", "updated catalog"));'
           git add src/client.js
           git commit -m 'After'
           echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -425,13 +444,13 @@ jobs:
         id: comparison
         uses: ./.action
         with:
-          groma-version: '0.7.6'
+          groma-version: '0.7.7'
           output: comparison-site
           from: ${{ steps.commits.outputs.from }}
           revision: ${{ steps.commits.outputs.revision }}
 
       - name: Verify the selected Groma version
-        run: test "$(groma --version)" = "0.7.6"
+        run: test "$(groma --version)" = "0.7.7"
 
       - name: Verify committed comparison
         env:

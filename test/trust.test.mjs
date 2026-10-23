@@ -50,12 +50,16 @@ it('rejects every inherited Git TLS bypass spelling and value before preparing w
 });
 
 it('prepares composite workflow trust without PATH Node/npm and preserves original npm CA selection', async t => {
-  const root = await temporary(t), env = { PATH: '', NPM_CONFIG_CAFILE: '/original/npm-policy.pem' };
-  const settings = prepareWorkflowTrust({ env, directory: root, bundled: [privateCA], getCertificates: () => [] });
-  assert.deepEqual(certificates(await readFile(settings.SSL_CERT_FILE, 'utf8')).map(key), [key(privateCA)]);
+  const root = await temporary(t), env = { PATH: '', NPM_CONFIG_CAFILE: '/original/npm-policy.pem',
+    GIT_SSL_CAINFO: '/private/git-ca.pem', GIT_PROXY_SSL_CAINFO: '/private/proxy-ca.pem', GIT_SSL_NO_VERIFY: 'false' };
+  const { node: settings } = prepareWorkflowTrust({ env, directory: root, bundled: [privateCA], getCertificates: () => [] });
+  assert.deepEqual(certificates(await readFile(settings.NODE_EXTRA_CA_CERTS, 'utf8')).map(key), [key(privateCA)]);
   assert.equal(Object.hasOwn(settings, 'NPM_CONFIG_CAFILE'), false);
   assert.equal(Object.hasOwn(settings, 'npm_config_cafile'), false);
   assert.equal(env.NPM_CONFIG_CAFILE, '/original/npm-policy.pem');
+  assert.deepEqual(Object.keys(settings).sort(), ['NODE_EXTRA_CA_CERTS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_USE_SYSTEM_CA']);
+  assert.equal(env.GIT_SSL_CAINFO, '/private/git-ca.pem');
+  assert.equal(env.GIT_PROXY_SSL_CAINFO, '/private/proxy-ca.pem');
   for (const filename of ['action.yml', 'publish/action.yml']) {
     const source = await readFile(new URL('../' + filename, import.meta.url), 'utf8');
     const first = source.slice(source.indexOf('    - name: Prepare filtered'), source.indexOf('    - uses: actions/setup-node'));
@@ -181,15 +185,15 @@ it('exports safe workflow settings without forbidden NODE_OPTIONS or environment
 });
 
 it('installs current npm before the exact Groma pin using native npm with explicit strict TLS', () => {
-  const calls = [], settings = { ...trustSettings('/global.pem', '/empty'),
+  const calls = [], settings = { NODE_EXTRA_CA_CERTS: '/global.pem', NODE_USE_SYSTEM_CA: '0', NODE_TLS_REJECT_UNAUTHORIZED: '1',
     NPM_CONFIG_CAFILE: '/private filtered.pem', npm_config_cafile: '/private filtered.pem' };
-  installGroma('0.7.6', settings, { env: { HTTPS_PROXY: 'http://proxy.example', NPM_TOKEN: 'preserved', GIT_SSL_NO_VERIFY: 'false', git_ssl_no_verify: '1' },
+  installGroma('0.7.7', settings, { env: { HTTPS_PROXY: 'http://proxy.example', NPM_TOKEN: 'preserved', GIT_SSL_NO_VERIFY: 'false', git_ssl_no_verify: '1' },
     execute: (args, env) => { calls.push(args); assert.equal(env.HTTPS_PROXY, 'http://proxy.example');
-      assert.equal(env.NPM_TOKEN, 'preserved'); assert.equal(env.NODE_OPTIONS, '--use-openssl-ca');
-      assert.equal(Object.keys(env).some(key => key.toUpperCase() === 'GIT_SSL_NO_VERIFY'), false); } });
-  assert.deepEqual(calls, [installArguments('npm@12.2.0', settings.NPM_CONFIG_CAFILE), installArguments('groma.md@0.7.6', settings.NPM_CONFIG_CAFILE)]);
+      assert.equal(env.NPM_TOKEN, 'preserved'); assert.equal(env.NODE_OPTIONS, '--use-bundled-ca');
+      assert.equal(env.GIT_SSL_NO_VERIFY, 'false'); assert.equal(env.git_ssl_no_verify, '1'); } });
+  assert.deepEqual(calls, [installArguments('npm@12.2.1', settings.NPM_CONFIG_CAFILE), installArguments('groma.md@0.7.7', settings.NPM_CONFIG_CAFILE)]);
   for (const args of calls) { assert.ok(args.includes('--strict-ssl=true')); assert.ok(args.includes('--cafile=/private filtered.pem')); }
-  assert.throws(() => installArguments('groma.md@0.7.6;echo unsafe', 'ca'));
+  assert.throws(() => installArguments('groma.md@0.7.7;echo unsafe', 'ca'));
   const executions = [];
   runNpm(calls[1], {}, { query: () => '/native/global modules', exists: () => true,
     execute: (...args) => executions.push(args) });

@@ -17,8 +17,7 @@ for (const failUpdate of [false, true]) {
       { id: 'git', source: 'git+https://example.com/scanner#revision' },
     ] }));
     const calls = [];
-    const execute = async (command, args) => {
-      assert.equal(command, 'groma');
+    const execute = async args => {
       calls.push(args);
       if (failUpdate && args[1] === 'update') throw new Error('update failed');
     };

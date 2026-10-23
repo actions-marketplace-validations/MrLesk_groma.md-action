@@ -3,6 +3,7 @@ import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/pro
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { runGroma } from './groma.mjs';
 
 const run = promisify(execFile);
 
@@ -32,12 +33,12 @@ export function summarize(payload) {
 
 // The empty working root has no plugin configuration. Git still reads the existing
 // repository's committed architecture and source, without loading project scanner hooks.
-export async function exportComparison({ repositoryRoot, directory, from, revision, execute = run }) {
+export async function exportComparison({ repositoryRoot, directory, from, revision, execute = runGroma }) {
   const { stdout } = await run('git', ['rev-parse', '--absolute-git-dir'], { cwd: repositoryRoot });
   const root = await mkdtemp(path.join(os.tmpdir(), 'groma-comparison-'));
   try {
     await mkdir(path.join(root, 'groma'));
-    await execute('groma', ['export', path.resolve(repositoryRoot, directory), '--from', from, '--revision', revision], {
+    await execute(['export', path.resolve(repositoryRoot, directory), '--from', from, '--revision', revision], {
       cwd: root,
       env: Object.fromEntries(Object.entries({ ...process.env, GIT_DIR: stdout.trim(), GIT_WORK_TREE: root })
         .filter(([key]) => key.toUpperCase() !== 'GIT_SSL_NO_VERIFY')),

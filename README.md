@@ -31,7 +31,7 @@ For a repository without a Pages site, set the Pages source to **GitHub Actions*
 ```yaml
 - uses: MrLesk/groma.md-action@v1
   with:
-    groma-version: '0.7.6'
+    groma-version: '0.7.7'
     output: site # your built site
     theme: blueprint
 ```
@@ -42,7 +42,7 @@ The Action requires Groma 0.7 or newer. It lets the CLI convert an existing `sca
 
 | Input | Default | Meaning |
 | --- | --- | --- |
-| `groma-version` | `0.7.6` | Groma CLI version; pin it to control reader upgrades |
+| `groma-version` | `0.7.7` | Groma CLI version; pin it to control reader upgrades |
 | `output` | `groma-site` | Website root, relative to the checkout |
 | `theme` | `auto` | `auto`, `light`, `dark` or `blueprint` |
 | `exclude` | | Extra scan exclusions, one per line; not for comparisons |
@@ -55,16 +55,14 @@ The Action requires Groma 0.7 or newer. It lets the CLI convert an existing `sca
 | `directory` | The map, at `<output>/architecture/<theme>/` |
 | `summary` | Comparison JSON with the change counts; empty without `from` |
 
-The default is Groma 0.7.6. `@v1` follows Action releases, which can change that default. Set `groma-version` to an exact release to keep reader upgrades explicit.
+The default is Groma 0.7.7. `@v1` follows Action releases, which can change that default. Set `groma-version` to an exact release to keep reader upgrades explicit.
 
 Both comparison commits must contain architecture that the selected Groma version can read. After a format change, update an older PR from its base branch so its merge base and head use the current format. Choosing a version does not convert committed architecture.
 
 ## TLS trust during installation
 
-The Action uses Node 26.12.1 and npm 12.2.0. Before its network steps it filters the twelve incident keys from bundled, system and extra CAs and keeps strict TLS enabled. Native npm retains authentication, proxy and registry configuration, including the precedence and exclusivity of custom CA settings. Private CA roots and existing Git settings are preserved. Checkout and publication use the filtered CA policy selected by Git after repository URL rewrites; without an explicit Git CA selection, they use filtered OS system roots without adding Node-only authorities. Custom Git installations should select their CA file or directory explicitly. Other Git remotes retain their own CA settings for Groma to filter when used. Pages publication requires the repository fetch and push URLs to resolve to the same destination.
+The Action uses Node 26.12.1 and npm 12.2.1. Installation keeps strict TLS and filters the incident keys from its selected CA bundle. npm retains authentication, proxy and registry configuration. Installation settings stay with that child process; public Action setup exports only Node certificate settings. Project Git commands retain their own CA, verification, proxy, rewrite and authentication settings, including private HTTPS proxies. Pages publication requires the repository fetch and push URLs to resolve to the same destination.
 
-Native Git connections through a proxy URL starting with `https://` are blocked for this hotfix, including private HTTPS proxies. Git cannot disable its separate system proxy CA-directory fallback, so a filtered or empty proxy CA file alone is insufficient. An unusable proxy CA path beneath an owned regular file stops TLS before CONNECT or credentials are sent. Direct HTTPS and existing `http://` proxy transports retain verified origin TLS and authentication. The URL scheme determines proxy transport, so `HTTPS_PROXY=http://...` continues to work.
-
-Remove `GIT_SSL_NO_VERIFY` from runner and workflow environments; setup stops if it is present with any value. The composite Actions prepare trust with the runner's bundled Node before provisioning Node/npm, so neither tool needs to be preinstalled on `PATH`.
+The composite Actions prepare Node trust with the runner's bundled Node before provisioning Node/npm, so neither tool needs to be preinstalled on `PATH`.
 
 The examples prepare the same filtered trust before checkout or GitHub API calls. Keep that first step and the workflow `NODE_OPTIONS` setting when adapting them. The GitHub runner prepares Action archives before job steps; that earlier phase depends on the runner vendor's trust updates.
