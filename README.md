@@ -31,7 +31,7 @@ For a repository without a Pages site, set the Pages source to **GitHub Actions*
 ```yaml
 - uses: MrLesk/groma.md-action@v1
   with:
-    groma-version: '0.7.7'
+    groma-version: '0.7.8'
     output: site # your built site
     theme: blueprint
 ```
@@ -42,7 +42,7 @@ The Action requires Groma 0.7 or newer. It lets the CLI convert an existing `sca
 
 | Input | Default | Meaning |
 | --- | --- | --- |
-| `groma-version` | `0.7.7` | Groma CLI version; pin it to control reader upgrades |
+| `groma-version` | `0.7.8` | Groma CLI version; pin it to control reader upgrades |
 | `output` | `groma-site` | Website root, relative to the checkout |
 | `theme` | `auto` | `auto`, `light`, `dark` or `blueprint` |
 | `exclude` | | Extra scan exclusions, one per line; not for comparisons |
@@ -55,7 +55,7 @@ The Action requires Groma 0.7 or newer. It lets the CLI convert an existing `sca
 | `directory` | The map, at `<output>/architecture/<theme>/` |
 | `summary` | Comparison JSON with the change counts; empty without `from` |
 
-The default is Groma 0.7.7. `@v1` follows Action releases, which can change that default. Set `groma-version` to an exact release to keep reader upgrades explicit.
+The default is Groma 0.7.8. `@v1` follows Action releases, which can change that default. Set `groma-version` to an exact release to keep reader upgrades explicit.
 
 Both comparison commits must contain architecture that the selected Groma version can read. After a format change, update an older PR from its base branch so its merge base and head use the current format. Choosing a version does not convert committed architecture.
 
